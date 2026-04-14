@@ -20,10 +20,8 @@ behavior-explainer/
 │   └── EuroSAT/
 ├── vocabs/                 # Concept vocabularies and reference word lists
 ├── intermediate_results/   # Pickled tensors and trained models (not tracked)
-├── configs/                # Hyperparameter and experiment config files
 ├── scripts/                # Entry-point scripts for reproducing experiments
 ├── notebooks/              # Exploratory notebooks
-├── plots/                  # Generated paper figures
 ├── results/                # Evaluation outputs and metrics
 └── tests/                  # Unit tests
 ```
