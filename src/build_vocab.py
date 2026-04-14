@@ -14,7 +14,6 @@ from pathlib import Path
 
 import clip
 import torch
-import pandas as pd
 from tqdm import tqdm
 
 # Make project root importable
@@ -39,7 +38,8 @@ EUROSAT_CLASSES = [
 # ---------------------------------------------------------------------------
 
 def load_prompts(path):
-    prompts = pd.read_csv(path, delimiter=",")["prompt"].tolist()
+    with open(path, "r") as f:
+        prompts = [line.strip() for line in f if line.strip()]
     print(f"+ Prompts loaded (n={len(prompts)})")
     return prompts
 
@@ -143,10 +143,10 @@ def main():
     print("+ CLIP model loaded.")
 
     # Load reference data
-    data_dir = PROJECT_ROOT / "data"
-    prompts = load_prompts(data_dir / "prompts.csv")
-    mscoco = load_mscoco(data_dir / "mscoco.csv")
-    cwn = load_core_wordnet(data_dir / "core-wordnet.txt")
+    vocabs_dir = PROJECT_ROOT / "vocabs"
+    prompts = load_prompts(vocabs_dir / "prompts.txt")
+    mscoco = load_mscoco(vocabs_dir / "mscoco.txt")
+    cwn = load_core_wordnet(vocabs_dir / "core-wordnet.txt")
 
     N = 2200
     max_cos_sim = 90

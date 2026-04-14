@@ -1,4 +1,3 @@
-vocabulary
 gol
 investigated
 associate
