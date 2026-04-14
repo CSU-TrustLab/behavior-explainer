@@ -1,5 +1,6 @@
 # Core ML
 torch
+torchvision
 numpy
 scikit-learn
 
