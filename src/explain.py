@@ -14,10 +14,10 @@ Prediction helpers (used to build ``pred_fn`` in run_experiment.py):
     get_model_acc, get_zsclip_acc
 
 Explanation core:
-    CheckAXpFast, CheckCXp, OneAXp, OneCXp, XPEnum, ExhaustiveSearch
+    CheckAXpFast, CheckCXp, OneAXp, OneCXp, xp_enum, naive_enum_search
 
 Algorithm wrappers (write CSV results to results_dir):
-    wrapper_XpEnum, wrapper_Saturate, wrapper_Exhaustive
+    wrapper_XpEnum, wrapper_XpSatEnum, wrapper_NaiveEnum
 
 Design note
 -----------
@@ -25,7 +25,7 @@ All oracle and wrapper functions accept a ``pred_fn`` callable::
 
     pred_fn(e_clip_erased, norms, original_pred) -> (acc, per_image)
 
-This callable encapsulates model-specific details (setup_b, alignment maps,
+This callable encapsulates model-specific details (setup, alignment maps,
 means, class vectors, device, norm_flag) and is constructed once per
 experiment configuration in run_experiment.py.
 """
@@ -62,7 +62,7 @@ def remove_elements(a_list, list_to_remove):
 
 
 def filter_behavior(data_dict, B):
-    """Remove images not matching behaviour predicate B(predicted, label)."""
+    """Remove images not matching behavior predicate B(predicted, label)."""
     outside = [k for k, v in data_dict.items() if not B(v[1], v[0])]
     for k in outside:
         del data_dict[k]
@@ -136,7 +136,7 @@ def plot_confusion_matrix(data_dict, title, file_name=None, results_dir=None):
 # ---------------------------------------------------------------------------
 
 def get_model_acc(e_clip_erased, norms, align_inv, f_head, original_pred,
-                  setup_b, img_mean_map, device, norm_flag):
+                  img_mean_map, device, norm_flag):
     """
     Predict from an erased CLIP-space embedding via the vision-model pipeline.
 
@@ -154,8 +154,7 @@ def get_model_acc(e_clip_erased, norms, align_inv, f_head, original_pred,
             e = e * norms_t
     e = e + img_mean_map
 
-    e_vision = e.float() if setup_b == "f_space" else align_inv(e.float())
-    logits = f_head(e_vision)
+    logits = f_head(align_inv(e.float()))
     _, predicted = torch.max(logits, 1)
     per_image = (predicted == original_pred)
     acc = per_image.sum().item() / predicted.shape[0]
@@ -189,11 +188,15 @@ def get_zsclip_acc(e_clip_erased, norms, original_pred,
 # Data loading
 # ---------------------------------------------------------------------------
 
-def get_clip_embeddings(D, setup_a, setup_b, f_enc, CLIP_enc, align, align_inv,
+def get_clip_embeddings(D, setup, f_enc, CLIP_enc, align, align_inv,
                         f_head, img_mean_map, img_mean_clip, class_vectors,
                         device, norm_flag, sample=-1):
     """
     Iterate over dataset D and compute per-image CLIP-space embeddings.
+
+    Parameters
+    ----------
+    setup : 'vision-model' | 'zero-shot-clip'
 
     Returns
     -------
@@ -210,14 +213,12 @@ def get_clip_embeddings(D, setup_a, setup_b, f_enc, CLIP_enc, align, align_inv,
         labels = labels.to(device)
 
         # --- compute CLIP-space embedding and centre it ---
-        if setup_a == "clip_enc":
+        if setup == "zero-shot-clip":
             e_clip = CLIP_enc(images).to(torch.float64) - img_mean_clip
-        elif setup_a == "f_enc":
+        elif setup == "vision-model":
             e_clip = align(f_enc(images)).to(torch.float64) - img_mean_map
-        elif setup_a == "f_space":
-            e_clip = f_enc(images).to(torch.float64) - img_mean_map
         else:
-            raise ValueError(f"Unknown setup_a: {setup_a!r}")
+            raise ValueError(f"Unknown setup: {setup!r}")
 
         norm = e_clip.norm(dim=-1, keepdim=True)
         if norm_flag:
@@ -228,14 +229,10 @@ def get_clip_embeddings(D, setup_a, setup_b, f_enc, CLIP_enc, align, align_inv,
         e_pred = e_clip.clone()
         if norm_flag:
             e_pred = e_pred * norm
-        if setup_b == "zs_clip":
+        if setup == "zero-shot-clip":
             logits = (e_pred + img_mean_clip) @ class_vectors
-        elif setup_b == "f_head":
+        else:  # vision-model
             logits = f_head(align_inv((e_pred + img_mean_map).float()))
-        elif setup_b == "f_space":
-            logits = f_head((e_pred + img_mean_map).float())
-        else:
-            raise ValueError(f"Unknown setup_b: {setup_b!r}")
 
         _, predicted = torch.max(logits, 1)
 
@@ -366,9 +363,9 @@ def OneCXp(F, v_full, v_norm, realF, ori_predicted, eraser, pred_fn):
     return sorted(S)
 
 
-def XPEnum(v, v_norm, ori_predicted, eraser, pred_fn, iters=250):
+def xp_enum(v, v_norm, ori_predicted, eraser, pred_fn, iters=250):
     """
-    NINA-based enumeration of abductive and contrastive explanations.
+    NINA-based enumeration of abductive and contrastive explanations (XpEnum).
 
     Alternates between growing a list of AXps (ninaN) and CXps (ninaP) using
     minimal hitting sets.  Stops early when no new hitting set is found.
@@ -405,9 +402,9 @@ def XPEnum(v, v_norm, ori_predicted, eraser, pred_fn, iters=250):
     return last_S, ninaN, ninaP, summary
 
 
-def ExhaustiveSearch(v, ori_predicted, eraser, pred_fn, search_depth=2, findAXps=True):
+def naive_enum_search(v, ori_predicted, eraser, pred_fn, search_depth=2, findAXps=True):
     """
-    Depth-bounded exhaustive search for AXps or CXps.
+    Depth-bounded exhaustive search for AXps or CXps (NaiveEnum).
 
     Iterates over all candidate concept subsets up to ``search_depth`` in size.
     Supersets of already-confirmed explanations are pruned.
@@ -481,23 +478,23 @@ def _write_binary_csv(path, results_list, instance_idxs, C_len, C_ord_signs):
 # ---------------------------------------------------------------------------
 
 def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
-                   experiments_per_behavior, XPEnum_iters, behavior_id,
+                   experiments_per_behavior, xpenum_iters, behavior_id,
                    results_dir, device):
     """
-    Run XPEnum on every instance in filtered_data (up to experiments_per_behavior).
+    Run XpEnum on every instance in filtered_data (up to experiments_per_behavior).
 
     For each instance, runs the NINA loop to enumerate AXps and CXps.
     Writes binary CSV results to results_dir.
 
     Returns (all_results, all_eclips, all_predicted, all_instance_idxs)
-    for use by wrapper_Saturate.
+    for use by wrapper_XpSatEnum.
     """
     all_results   = []
     all_eclips    = []
     all_predicted = []
     all_idxs      = []
 
-    print(f"\n{behavior_id} ── XPEnum ──────────────────────────")
+    print(f"\n{behavior_id} ── XpEnum ──────────────────────────")
     t0 = time.time()
 
     for inst_idx, a_data in enumerate(tqdm(filtered_data.values())):
@@ -508,8 +505,8 @@ def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
         if isinstance(eraser, ClipSpliceEraser):
             eraser = ClipSpliceEraser(C_vectors, instance_v, device=device, dtype=torch.float64)
 
-        _, lastA, lastC, _ = XPEnum(
-            instance_v, ins_v_norm, ins_predicted, eraser, pred_fn, iters=XPEnum_iters
+        _, lastA, lastC, _ = xp_enum(
+            instance_v, ins_v_norm, ins_predicted, eraser, pred_fn, iters=xpenum_iters
         )
 
         if lastA or lastC:
@@ -530,25 +527,26 @@ def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
 
     elapsed = time.time() - t0
     with open(Path(results_dir) / f"time_{behavior_id}.csv", "w") as f:
-        f.write(f"XPEnum:\n{elapsed:.2f}\n")
+        f.write(f"XpEnum:\n{elapsed:.2f}\n")
     print(f"{behavior_id} ── done ({elapsed:.1f}s) ────────────────────")
     return all_results, all_eclips, all_predicted, all_idxs
 
 
-def wrapper_Saturate(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
-                     all_results, all_eclips, all_predicted, all_idxs,
-                     behavior_id, results_dir, device):
+def wrapper_XpSatEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
+                      all_results, all_eclips, all_predicted, all_idxs,
+                      behavior_id, results_dir, device):
     """
-    Saturate explanations: for every instance, try explanations found on all
-    other instances and check whether they transfer (minimised if necessary).
+    XpSatEnum: saturate explanations found by XpEnum across instances.
 
-    Overwrites the XPEnum CSV files with the enriched results.
+    For every instance, tries explanations found on all other instances and
+    checks whether they transfer (minimised if necessary).
+    Overwrites the XpEnum CSV files with the enriched results.
 
     Note: uses the source instance's predicted class for the oracle check,
     which is equivalent to using the target's class when all instances in the
-    behaviour share the same prediction (e.g. B2, B6).
+    behavior share the same prediction (e.g. B2, B6).
     """
-    print(f"\n{behavior_id} ── Saturate ────────────────────────")
+    print(f"\n{behavior_id} ── XpSatEnum ───────────────────────")
     t0 = time.time()
 
     pre_lens = [{"A": len(r["A"]), "C": len(r["C"])} for r in all_results]
@@ -598,15 +596,15 @@ def wrapper_Saturate(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
 
     elapsed = time.time() - t0
     with open(Path(results_dir) / f"time_{behavior_id}.csv", "w") as f:
-        f.write(f"Saturate:\n{elapsed:.2f}\n")
+        f.write(f"XpSatEnum:\n{elapsed:.2f}\n")
     print(f"{behavior_id} ── done ({elapsed:.1f}s) ────────────────────")
 
 
-def wrapper_Exhaustive(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
-                       experiments_per_behavior, search_depth, behavior_id,
-                       results_dir, device):
+def wrapper_NaiveEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
+                      experiments_per_behavior, search_depth, behavior_id,
+                      results_dir, device):
     """
-    Run depth-bounded exhaustive search for AXps and CXps on every instance.
+    NaiveEnum: depth-bounded exhaustive search for AXps and CXps on every instance.
     Writes binary CSV results to results_dir.
     """
     all_results   = []
@@ -614,7 +612,7 @@ def wrapper_Exhaustive(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn
     all_predicted = []
     all_idxs      = []
 
-    print(f"\n{behavior_id} ── Exhaustive (depth={search_depth}) ──────────")
+    print(f"\n{behavior_id} ── NaiveEnum (depth={search_depth}) ─────────")
     t0 = time.time()
 
     for inst_idx, a_data in enumerate(tqdm(filtered_data.values())):
@@ -624,10 +622,10 @@ def wrapper_Exhaustive(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn
         if isinstance(eraser, ClipSpliceEraser):
             eraser = ClipSpliceEraser(C_vectors, instance_v, device=device, dtype=torch.float64)
 
-        lastA = ExhaustiveSearch(instance_v, ins_predicted, eraser, pred_fn,
-                                 search_depth=search_depth, findAXps=True)
-        lastC = ExhaustiveSearch(instance_v, ins_predicted, eraser, pred_fn,
-                                 search_depth=search_depth, findAXps=False)
+        lastA = naive_enum_search(instance_v, ins_predicted, eraser, pred_fn,
+                                  search_depth=search_depth, findAXps=True)
+        lastC = naive_enum_search(instance_v, ins_predicted, eraser, pred_fn,
+                                  search_depth=search_depth, findAXps=False)
 
         if lastA or lastC:
             all_results.append({"A": lastA, "C": lastC})
@@ -647,5 +645,5 @@ def wrapper_Exhaustive(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn
 
     elapsed = time.time() - t0
     with open(Path(results_dir) / f"time_{behavior_id}.csv", "w") as f:
-        f.write(f"Exhaustive:\n{elapsed:.2f}\n")
+        f.write(f"NaiveEnum:\n{elapsed:.2f}\n")
     print(f"{behavior_id} ── done ({elapsed:.1f}s) ────────────────────")
