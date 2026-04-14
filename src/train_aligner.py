@@ -2,15 +2,15 @@
 train_aligner.py — Extract penultimate-layer representations and train linear
                    aligners between a vision model's embedding space and CLIP.
 
-Subtasks:
-  B) Feature extractors — expose the penultimate-layer (intermediate) vector
+Steps:
+  1. Feature extractors — expose the penultimate-layer (intermediate) vector
      and the final linear head, treating the model as a white box consistent
      with the linear representation hypothesis.
-  C) Representation extraction — paired tensors: one from the vision model
+  2. Representation extraction — paired tensors: one from the vision model
      feature extractor, one from CLIP's image encoder.
-  D) Linear aligner: vision model space → CLIP space.
-  E) Linear aligner: CLIP space → vision model space.
-  F) Round-trip evaluation — compare original embeddings to
+  3. Linear aligner: vision model space → CLIP space.
+  4. Linear aligner: CLIP space → vision model space.
+  5. Round-trip evaluation — compare original embeddings to
      clip_to_model(model_to_clip(e_model)) using MSE and R².
 
 All aligners are saved to intermediate_results/ via Pickler.
@@ -33,7 +33,7 @@ from src.datasets import get_dataloader_eurosat, get_dataloader_rival10
 
 
 # ---------------------------------------------------------------------------
-# B) Feature extractors
+# Feature extractors
 # ---------------------------------------------------------------------------
 
 def get_feature_extractor(net, model_type):
@@ -85,7 +85,7 @@ def get_feature_extractor(net, model_type):
 
 
 # ---------------------------------------------------------------------------
-# C) Representation extraction
+# Representation extraction
 # ---------------------------------------------------------------------------
 
 def extract_representations(net, clip_enc, dataloader, model_type, device):
@@ -120,7 +120,7 @@ def extract_representations(net, clip_enc, dataloader, model_type, device):
 
 
 # ---------------------------------------------------------------------------
-# D & E) Linear aligner
+# Linear aligner
 # ---------------------------------------------------------------------------
 
 class VectorToVectorRegression(torch.nn.Module):
@@ -179,7 +179,7 @@ def train_aligner(source_train, target_train, source_test, target_test,
 
 
 # ---------------------------------------------------------------------------
-# F) Round-trip evaluation
+# Round-trip evaluation
 # ---------------------------------------------------------------------------
 
 def evaluate_roundtrip(model_to_clip, clip_to_model, reps_model_train, reps_model_test):
@@ -226,18 +226,18 @@ def main():
         name, model_type, loader = cfg["name"], cfg["model_type"], cfg["loader"]
         print(f"\n{'='*60}\nAligner: {name}\n{'='*60}")
 
-        # B) Load fine-tuned model; feature_extractor + head is the white-box decomposition
-        net = Pickler.read(f"{name}_iter1")
+        # Load fine-tuned model; feature_extractor + head is the white-box decomposition
+        net = Pickler.read(f"{name}_finetuned")
         net.eval()
 
-        # C) Extract paired representations
+        # Extract paired representations
         reps_model, reps_clip = extract_representations(net, clip_enc, loader, model_type, device)
         model_train, model_test, clip_train, clip_test = train_test_split(
             reps_model, reps_clip, test_size=0.2, random_state=42
         )
 
-        # D) model → CLIP
-        print(f"\n[D] Training {name} → CLIP")
+        # Train linear aligner: model → CLIP
+        print(f"\nTraining {name} → CLIP")
         model_to_clip = train_aligner(
             model_train, clip_train, model_test, clip_test,
             device=device, epochs=50000, lr=0.01, log_every=5000,
@@ -245,8 +245,8 @@ def main():
         Pickler.write(f"{name}_to_clip", model_to_clip)
         print(f"Saved: {name}_to_clip")
 
-        # E) CLIP → model
-        print(f"\n[E] Training CLIP → {name}")
+        # Train linear aligner: CLIP → model
+        print(f"\nTraining CLIP → {name}")
         clip_to_model = train_aligner(
             clip_train, model_train, clip_test, model_test,
             device=device, epochs=10000, lr=0.01, log_every=2500,
@@ -254,8 +254,8 @@ def main():
         Pickler.write(f"clip_to_{name}", clip_to_model)
         print(f"Saved: clip_to_{name}")
 
-        # F) Round-trip evaluation
-        print(f"\n[F] Round-trip evaluation: {name}")
+        # Round-trip evaluation
+        print(f"\nRound-trip evaluation: {name}")
         evaluate_roundtrip(model_to_clip, clip_to_model, model_train, model_test)
 
     print("\nDone!")

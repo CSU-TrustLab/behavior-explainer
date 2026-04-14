@@ -199,8 +199,8 @@ def main():
             net = cfg["pre_fn"](net)
         net = train(net, cfg["loader"], epochs=cfg["epochs"], lr=cfg["lr"])
         net.eval()
-        Pickler.write(f"{cfg['name']}_iter1", net)
-        print(f"Saved: {cfg['name']}_iter1")
+        Pickler.write(f"{cfg['name']}_finetuned", net)
+        print(f"Saved: {cfg['name']}_finetuned")
 
     print("\nAll models fine-tuned and saved.")
 
