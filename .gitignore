@@ -40,6 +40,10 @@ datasets/EuroSAT/Residential/
 datasets/EuroSAT/River/
 datasets/EuroSAT/SeaLake/
 
+# Intermediate results (pickled tensors, cached objects — can be heavy)
+intermediate_results/
+!intermediate_results/.gitkeep
+
 # Plots (optionally tracked)
 # plots/
 
