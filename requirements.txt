@@ -12,3 +12,5 @@ seaborn
 
 # Utilities
 tqdm
+python-sat  # Hitman MHS solver: https://pysathq.github.io/docs/html/api/examples/hitman.html
+concept-erasure  # LEACE concept erasure: https://github.com/EleutherAI/concept-erasure
