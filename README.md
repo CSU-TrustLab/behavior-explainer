@@ -10,7 +10,9 @@ behavior-explainer/
 │   ├── datasets.py         # RIVAL10 and EuroSAT dataset classes and dataloaders
 │   ├── finetune.py         # Fine-tuning ResNet18 and VGG19 on RIVAL10 / EuroSAT
 │   ├── train_aligner.py    # Penultimate-layer extraction and CLIP linear aligner training
-│   └── build_vocab.py      # Concept vocabulary generation via CLIP
+│   ├── build_vocab.py      # Concept vocabulary generation via CLIP
+│   ├── explain.py          # Abductive/contrastive explanation engine (AXp/CXp, XPEnum, Exhaustive)
+│   └── run_experiment.py   # Run all 9 configurations (3 erasers × 3 algorithms) for one behaviour
 ├── utils/                  # Shared utilities
 │   ├── pickler.py          # Compressed binary serialisation (Pickler / CPU_Unpickler)
 │   ├── concept_eraser.py   # Concept erasure: ClipOrthoEraser, ClipSpliceEraser, LeaceEraserWrapper
@@ -61,3 +63,13 @@ python src/train_aligner.py
 
 Extracts penultimate-layer representations from each fine-tuned model, trains bidirectional
 linear maps to/from CLIP space, and reports round-trip reconstruction quality.
+
+### 4. Run explanation experiments
+
+```bash
+python src/run_experiment.py --model resnet_rival10 --behavior 2 --class-idx 4
+```
+
+Runs all 9 configurations (Ortho / Splice / LEACE erasure × XPEnum / Saturate / Exhaustive)
+for one behaviour (a confusion-matrix cell), each with a 1-hour timeout.  Results are written
+to `results/`.  Pass `--help` for the full list of options.
