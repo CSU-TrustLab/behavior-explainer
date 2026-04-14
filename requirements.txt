@@ -1,0 +1,14 @@
+# Core ML
+torch
+numpy
+scikit-learn
+
+# Data handling
+pandas
+
+# Plotting
+matplotlib
+seaborn
+
+# Utilities
+tqdm
