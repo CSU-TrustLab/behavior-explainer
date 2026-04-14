@@ -20,6 +20,12 @@ from tqdm import tqdm
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# clip.pkl was pickled with the t2c module from the original codebase.
+# Add that source tree so it can be unpickled correctly.
+_LEGACY_SRC = PROJECT_ROOT.parent / "src"
+if _LEGACY_SRC.exists():
+    sys.path.append(str(_LEGACY_SRC))  # append so our utils/ package takes priority
+
 from utils.pickler import Pickler
 
 # ---------------------------------------------------------------------------
