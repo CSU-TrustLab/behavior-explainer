@@ -8,7 +8,7 @@ These files are used as inputs by the vocabulary generation script and were obta
 
 - **`core-wordnet.txt`** — A compact lexicon of core English words (nouns, adjectives, verbs) provided by Princeton University as part of the WordNet project.
 - **`mscoco.txt`** — A list of frequent words extracted from image captions in the [MS-COCO dataset](https://cocodataset.org). Used as a candidate pool for concept words.
-- **`prompts.txt`** — A set of prompt templates (e.g., `a photo of a {}.`) used to obtain concept vectors via CLIP's text encoder, following the approach in explainable AI literature such as [Ravi Mangal's work](https://arxiv.org/abs/2310.01837).
+- **`prompts.txt`** — A set of prompt templates (e.g., `a photo of a {}.`) used to obtain concept vectors via CLIP's text encoder, following the approach in explainable AI literature such as [Ravi Mangal's work](https://arxiv.org/abs/2403.19837).
 
 ## ii) Generated vocabularies
 
