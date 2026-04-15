@@ -12,9 +12,7 @@ Usage:
 import sys
 from pathlib import Path
 
-import clip
 import torch
-from tqdm import tqdm
 
 # Make project root importable
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -26,6 +24,7 @@ _LEGACY_SRC = PROJECT_ROOT.parent / "src"
 if _LEGACY_SRC.exists():
     sys.path.append(str(_LEGACY_SRC))  # append so our utils/ package takes priority
 
+from src.compute_means import get_text_mean
 from utils.pickler import Pickler
 
 # ---------------------------------------------------------------------------
@@ -75,16 +74,6 @@ def load_core_wordnet(path):
 
 def get_class_vectors(classes, clip_model, prompts):
     return clip_model.get_concept_vectors(classes, prompts, mean_centered=False, BMP=0)
-
-
-def find_text_mean(vocab, clip_model, device):
-    reps = []
-    for word in tqdm(vocab, desc="Computing text mean"):
-        tokens = clip.tokenize([word]).to(device)
-        rep = clip_model.encode_text(tokens)
-        reps.append(rep)
-    reps = torch.stack(reps)
-    return torch.mean(reps, dim=0).T
 
 
 def get_concept_vocab(order_preference, N, candidates, avoid, avoid_vecs, clip_model, prompts, max_cos_sim):
@@ -159,7 +148,7 @@ def main():
     candidates = cwn["n"] | cwn["a"]
 
     with torch.no_grad():
-        text_mean = find_text_mean(mscoco, clip_model, device)
+        text_mean = get_text_mean(clip_model, device)
 
         for dataset_name, classes in [("RIVAL10", RIVAL10_CLASSES), ("EuroSAT", EUROSAT_CLASSES)]:
             print(f"\n--- Building vocab for {dataset_name} ---")
