@@ -1,6 +1,6 @@
 # Behavior Explainer
 
-Code for the paper: **[Title]**
+Code for the paper: **[Paper Title]**
 
 ## Repository Structure
 
