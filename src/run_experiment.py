@@ -315,7 +315,9 @@ def main():
 
     device       = args.device
     model_name   = args.model
-    dataset_name = "eurosat" if "eurosat" in model_name else "rival10"
+    dataset_name      = "eurosat" if "eurosat" in model_name else "rival10"
+    # build_vocab.py saves vocab files with title-case dataset names (RIVAL10 / EuroSAT)
+    vocab_dataset_name = "EuroSAT" if "eurosat" in model_name else "RIVAL10"
 
     # ── Load models ──────────────────────────────────────────────────────────
     CLIP_enc, f_enc, f_head, align, align_inv = load_models(model_name, device)
@@ -331,7 +333,7 @@ def main():
         .to(device).to(torch.float64)
 
     # ── Load vocabulary ───────────────────────────────────────────────────────
-    C, C_vectors, class_vectors = load_vocab(dataset_name, args.mcs, device)
+    C, C_vectors, class_vectors = load_vocab(vocab_dataset_name, args.mcs, device)
 
     # ── Build prediction function ─────────────────────────────────────────────
     pred_fn = make_pred_fn(
@@ -365,7 +367,7 @@ def main():
             )
             if args.energy_order:
                 C, C_vectors = apply_energy_order(
-                    all_data, C, C_vectors, args.mcs, dataset_name, device
+                    all_data, C, C_vectors, args.mcs, vocab_dataset_name, device
                 )
             C_vectors_N = C_vectors[:, :args.n_concepts]
             C_N = C[:args.n_concepts]
@@ -382,7 +384,7 @@ def main():
             all_data = Pickler.read(cm_name)
             if args.energy_order:
                 C, C_vectors = apply_energy_order(
-                    all_data, C, C_vectors, args.mcs, dataset_name, device
+                    all_data, C, C_vectors, args.mcs, vocab_dataset_name, device
                 )
             C_vectors_N = C_vectors[:, :args.n_concepts]
             C_N = C[:args.n_concepts]

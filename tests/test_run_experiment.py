@@ -82,9 +82,9 @@ _REQUIRED_FILES = [
     INTERMEDIATE_DIR / f"{_MODEL}_finetuned.pkl",
     INTERMEDIATE_DIR / f"{_MODEL}_to_clip.pkl",
     INTERMEDIATE_DIR / f"clip_to_{_MODEL}.pkl",
-    INTERMEDIATE_DIR / f"MCS_{_MCS}_NA_rival10_vecs.pkl",
-    INTERMEDIATE_DIR / f"MCS_{_MCS}_NA_rival10_class_vecs.pkl",
-    VOCABS_DIR      / f"MCS_{_MCS}_NA_rival10.txt",
+    INTERMEDIATE_DIR / f"MCS_{_MCS}_NA_RIVAL10_vecs.pkl",
+    INTERMEDIATE_DIR / f"MCS_{_MCS}_NA_RIVAL10_class_vecs.pkl",
+    VOCABS_DIR      / f"MCS_{_MCS}_NA_RIVAL10.txt",
     DATASETS_DIR    / "RIVAL10" / "meta" / "train_test_split_by_url.json",
 ]
 

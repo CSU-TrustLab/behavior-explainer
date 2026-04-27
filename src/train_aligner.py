@@ -16,9 +16,10 @@ Steps:
 All aligners are saved to intermediate_results/ via Pickler.
 
 Usage:
-    python src/train_aligner.py
+    python src/train_aligner.py --model resnet_rival10
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -205,7 +206,15 @@ def evaluate_roundtrip(model_to_clip, clip_to_model, reps_model_train, reps_mode
 # ---------------------------------------------------------------------------
 
 def main():
-    device = "cuda:0"
+    p = argparse.ArgumentParser(description="Train CLIP linear aligners.")
+    p.add_argument(
+        "--model", default="all",
+        choices=["all", "resnet_rival10", "vgg_rival10", "resnet_eurosat", "vgg_eurosat"],
+        help="Which model to train aligners for (default: all)",
+    )
+    p.add_argument("--device", default="cuda:0")
+    args = p.parse_args()
+    device = args.device
 
     print("Loading CLIP model...")
     text_to_concept_obj = Pickler.read("clip")
@@ -215,12 +224,14 @@ def main():
     clip_enc = clip_model.input_to_representation
     print("+ CLIP loaded.")
 
-    configs = [
+    all_configs = [
         {"name": "resnet_eurosat", "model_type": "resnet", "loader": get_dataloader_eurosat()},
         {"name": "resnet_rival10", "model_type": "resnet", "loader": get_dataloader_rival10(train=True)},
         {"name": "vgg_rival10",    "model_type": "vgg",    "loader": get_dataloader_rival10(train=True)},
         {"name": "vgg_eurosat",    "model_type": "vgg",    "loader": get_dataloader_eurosat()},
     ]
+
+    configs = [c for c in all_configs if args.model == "all" or c["name"] == args.model]
 
     for cfg in configs:
         name, model_type, loader = cfg["name"], cfg["model_type"], cfg["loader"]

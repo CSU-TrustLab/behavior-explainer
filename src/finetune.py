@@ -11,10 +11,12 @@ Four model × dataset combinations, all following the same format:
 Fine-tuned models are saved to intermediate_results/ via Pickler.
 
 Usage:
-    python src/finetune.py
+    python src/finetune.py --model resnet_rival10 --max-minutes 15
 """
 
+import argparse
 import sys
+import time
 import warnings
 from pathlib import Path
 
@@ -119,13 +121,17 @@ def load_ssl4eo_weights(model, checkpoint_path):
 # Shared training loop
 # ---------------------------------------------------------------------------
 
-def train(model, train_loader, epochs=5, lr=0.05):
+def train(model, train_loader, epochs=5, lr=0.05, max_secs=None):
     """Fine-tune model using SGD with momentum. Returns model on CPU."""
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
     model.cuda()
+    t_start = time.time()
 
     for epoch in range(epochs):
+        if max_secs and (time.time() - t_start) > max_secs:
+            print(f"Time limit reached — stopping after {epoch} epoch(s).")
+            break
         model.train()
         running_loss = running_acc = 0.0
 
@@ -153,11 +159,28 @@ def train(model, train_loader, epochs=5, lr=0.05):
 # Main
 # ---------------------------------------------------------------------------
 
+def parse_args():
+    p = argparse.ArgumentParser(description="Fine-tune vision models.")
+    p.add_argument(
+        "--model", default="all",
+        choices=["all", "resnet_rival10", "vgg_rival10", "resnet_eurosat", "vgg_eurosat"],
+        help="Which model to fine-tune (default: all)",
+    )
+    p.add_argument(
+        "--max-minutes", type=float, default=None,
+        help="Wall-clock time limit per model in minutes (default: no limit)",
+    )
+    return p.parse_args()
+
+
 def main():
-    # SSL4EO checkpoint — download separately and place at this path
+    args = parse_args()
+    max_secs = args.max_minutes * 60 if args.max_minutes else None
+
+    # SSL4EO checkpoint — place at this path before running resnet_eurosat
     SSL4EO_CKPT = PROJECT_ROOT.parent / "SSL4EO_finetuned_weights" / "B3_rn18_moco_0099_ckpt.pth"
 
-    configs = [
+    all_configs = [
         {
             "name":   "resnet_eurosat",
             "model":  get_resnet_eurosat(),
@@ -192,17 +215,19 @@ def main():
         },
     ]
 
+    configs = [c for c in all_configs if args.model == "all" or c["name"] == args.model]
+
     for cfg in configs:
         print(f"\n{'='*60}\nFine-tuning: {cfg['name']}\n{'='*60}")
         net = cfg["model"]
         if cfg["pre_fn"] is not None:
             net = cfg["pre_fn"](net)
-        net = train(net, cfg["loader"], epochs=cfg["epochs"], lr=cfg["lr"])
+        net = train(net, cfg["loader"], epochs=cfg["epochs"], lr=cfg["lr"], max_secs=max_secs)
         net.eval()
         Pickler.write(f"{cfg['name']}_finetuned", net)
         print(f"Saved: {cfg['name']}_finetuned")
 
-    print("\nAll models fine-tuned and saved.")
+    print("\nAll selected models fine-tuned and saved.")
 
 
 if __name__ == "__main__":
