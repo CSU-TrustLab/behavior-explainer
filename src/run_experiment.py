@@ -294,6 +294,14 @@ def parse_args():
         "--rebuild-behaviors", action="store_true",
         help="Force rebuild of behavior data (ignore existing pkl)",
     )
+    p.add_argument(
+        "--timeout", type=int, default=3600,
+        help="Per-configuration timeout in seconds (default: 3600)",
+    )
+    p.add_argument(
+        "--results-dir", default=str(RESULTS_DIR),
+        help="Directory where CSV result files are written (default: results/)",
+    )
     return p.parse_args()
 
 
@@ -340,7 +348,7 @@ def main():
 
     cm_name         = f"CM_MCS{args.mcs}_N{args.n_concepts}{model_tag}{energy_tag}"
     behavior_suffix = f"B{args.behavior}{cls_str}{other_str}N{args.n_concepts}{model_tag}"
-    results_dir = RESULTS_DIR / cm_name
+    results_dir = Path(args.results_dir) / cm_name
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Build or load behavior data ───────────────────────────────────────────
@@ -426,14 +434,14 @@ def main():
             if not args.no_xpenum:
                 beh_id = f"{prefix}X{behavior_suffix}"
                 try:
-                    with time_limit(TIMEOUT_SECS):
+                    with time_limit(args.timeout):
                         xp_results, xp_eclips, xp_preds, xp_idxs = wrapper_XpEnum(
                             filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
                             args.experiments_per_behavior, args.xpenum_iters,
                             beh_id, results_dir, device,
                         )
                 except _TimeoutError:
-                    print(f"[TIMEOUT] {beh_id} exceeded {TIMEOUT_SECS}s — skipping")
+                    print(f"[TIMEOUT] {beh_id} exceeded {args.timeout}s — skipping")
 
                 # --- XpSatEnum (requires XpEnum results) ---
                 if not args.no_xpsatenum and xp_results is not None:
@@ -441,14 +449,14 @@ def main():
                         eraser.keep_hashmap = True
                     beh_id = f"{prefix}S{behavior_suffix}"
                     try:
-                        with time_limit(TIMEOUT_SECS):
+                        with time_limit(args.timeout):
                             wrapper_XpSatEnum(
                                 filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
                                 xp_results, xp_eclips, xp_preds, xp_idxs,
                                 beh_id, results_dir, device,
                             )
                     except _TimeoutError:
-                        print(f"[TIMEOUT] {beh_id} exceeded {TIMEOUT_SECS}s — skipping")
+                        print(f"[TIMEOUT] {beh_id} exceeded {args.timeout}s — skipping")
 
             # --- NaiveEnum ---
             if not args.no_naiveenum:
@@ -456,14 +464,14 @@ def main():
                     eraser.keep_hashmap = True
                 beh_id = f"{prefix}N{behavior_suffix}"
                 try:
-                    with time_limit(TIMEOUT_SECS):
+                    with time_limit(args.timeout):
                         wrapper_NaiveEnum(
                             filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
                             args.experiments_per_behavior, args.search_depth,
                             beh_id, results_dir, device,
                         )
                 except _TimeoutError:
-                    print(f"[TIMEOUT] {beh_id} exceeded {TIMEOUT_SECS}s — skipping")
+                    print(f"[TIMEOUT] {beh_id} exceeded {args.timeout}s — skipping")
 
     print("\nDone!")
 
