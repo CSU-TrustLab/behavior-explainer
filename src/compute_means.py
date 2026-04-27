@@ -35,6 +35,7 @@ if _LEGACY_SRC.exists():
     sys.path.append(str(_LEGACY_SRC))
 
 from src.datasets import get_dataloader_eurosat, get_dataloader_rival10
+from src.train_aligner import VectorToVectorRegression  # noqa: F401 — needed to unpickle aligners
 from src.train_aligner import get_feature_extractor
 from utils.pickler import Pickler
 
