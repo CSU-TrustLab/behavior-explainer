@@ -29,6 +29,11 @@ from sklearn.model_selection import train_test_split
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# clip.pkl was pickled with the legacy t2c module from the original codebase.
+_LEGACY_SRC = PROJECT_ROOT.parent / "src"
+if _LEGACY_SRC.exists():
+    sys.path.append(str(_LEGACY_SRC))
+
 from utils.pickler import Pickler
 from src.datasets import get_dataloader_eurosat, get_dataloader_rival10
 
