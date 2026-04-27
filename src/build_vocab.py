@@ -148,7 +148,7 @@ def main():
     candidates = cwn["n"] | cwn["a"]
 
     with torch.no_grad():
-        text_mean = get_text_mean(clip_model, device)
+        text_mean = get_text_mean(clip_model, device).to(device)
 
         for dataset_name, classes in [("RIVAL10", RIVAL10_CLASSES), ("EuroSAT", EUROSAT_CLASSES)]:
             print(f"\n--- Building vocab for {dataset_name} ---")
