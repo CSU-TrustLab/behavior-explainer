@@ -442,5 +442,103 @@ def test_run_experiment_xpenum_rival10_cars(tmp_path):
         )
 
 
+@pytest.mark.skipif(_SKIP_COND, reason=_SKIP_MSG)
+def test_run_experiment_all_configs_rival10_planes():
+    """
+    Full integration test for step #5 (run_experiment.py).
+
+    Runs all 9 configurations (XpEnum + XpSatEnum + NaiveEnum) × (Ortho + Splice + LEACE)
+    on RIVAL10 behavior 2 (correctly classified planes, class_idx=2), with energy vocabulary
+    ordering, at most 50 images, and a 5-minute per-configuration timeout.
+
+    Results are written to intermediate_results/ (persistent, not tmp_path) so that the
+    output CSV files can be reused for metric calculation later.
+
+    Assertions
+    ----------
+    1. For each (eraser, algorithm) combination that completed within the timeout
+       (time CSV present), both binary CSV files (AXp and CXp) must exist.
+    2. Every data line in every completed CSV passes assert_csv_invariants.
+    3. Ortho + XpEnum must complete within the timeout.
+    4. At least one AXp explanation exists across all completed configurations.
+    5. AXp and CXp counts are printed for all completed configurations.
+
+    Note: LEACE may time out (each oracle call refits a LEACE eraser from scratch),
+    so XpSatEnum for LEACE may be skipped automatically. This is expected and not a failure.
+    """
+    from src.run_experiment import main as run_experiment_main
+
+    class_idx  = 2   # "plane" in RIVAL10
+    beh_suffix = f"B{_BEHAVIOR}{class_idx}{_OTHER_STR}N{_N_CONCEPTS}{_MODEL_TAG}"
+    results_dir = INTERMEDIATE_DIR / _CM_NAME
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    original_argv = sys.argv[:]
+    sys.argv = [
+        "run_experiment.py",
+        "--model",                    _MODEL,
+        "--behavior",                 str(_BEHAVIOR),
+        "--class-idx",                str(class_idx),
+        "--experiments-per-behavior", str(_MAX_IMAGES),
+        "--mcs",                      str(_MCS),
+        "--n-concepts",               str(_N_CONCEPTS),
+        "--xpenum-iters",             str(_XPENUM_ITERS),
+        "--timeout",                  str(_TIMEOUT),
+        "--results-dir",              str(INTERMEDIATE_DIR),
+        "--device",                   device,
+    ]
+    try:
+        run_experiment_main()
+    finally:
+        sys.argv = original_argv
+
+    # ── Check each (eraser, algorithm) pair ─────────────────────────────────
+    ALGOS = [("X", "XpEnum"), ("S", "XpSatEnum"), ("N", "NaiveEnum")]
+    axp_counts: dict = {}
+    cxp_counts: dict = {}
+    completed: list  = []
+
+    for prefix, eraser_name in _ERASER_PREFIXES:
+        for algo_key, algo_name in ALGOS:
+            beh_id   = f"{prefix}{algo_key}{beh_suffix}"
+            time_csv = results_dir / f"time_{beh_id}.csv"
+
+            if not time_csv.is_file():
+                print(f"\n[TIMEOUT/SKIPPED] {eraser_name} + {algo_name} did not complete "
+                      f"within {_TIMEOUT}s.")
+                continue
+
+            config_key = f"{eraser_name}+{algo_name}"
+            completed.append(config_key)
+
+            for xp_type in ("A", "C"):
+                csv_path = results_dir / f"binary_{beh_id}_{xp_type}.csv"
+                blocks   = assert_csv_invariants(csv_path, n_concepts=_N_CONCEPTS)
+                count    = sum(len(block) for block in blocks)
+                if xp_type == "A":
+                    axp_counts[config_key] = count
+                else:
+                    cxp_counts[config_key] = count
+
+    # ── Ortho + XpEnum must always complete ─────────────────────────────────
+    assert "ortho+XpEnum" in completed, (
+        f"Ortho + XpEnum did not complete within {_TIMEOUT}s. "
+        f"Completed: {completed}"
+    )
+
+    # ── At least one AXp explanation must have been found ────────────────────
+    total_axp = sum(axp_counts.values())
+    assert total_axp > 0, (
+        "No AXp explanations found across all completed configurations. "
+        "Check that behavior data contains images passing the sanity checks."
+    )
+
+    print(f"\nCompleted configurations: {completed}")
+    print(f"AXp counts: {axp_counts}")
+    print(f"CXp counts: {cxp_counts}")
+    print(f"Total AXp: {total_axp},  Total CXp: {sum(cxp_counts.values())}")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
