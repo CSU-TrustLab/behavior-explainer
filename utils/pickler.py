@@ -8,6 +8,33 @@ import torch
 # Default storage directory: behavior-explainer/intermediate_results/
 _DEFAULT_DIR = Path(__file__).resolve().parent.parent / "intermediate_results"
 
+# Classes saved when a script was run directly (module == "__main__") must be
+# remapped to their real importable path so they can be unpickled outside of
+# that script context (e.g. under pytest or when loaded by another module).
+_MAIN_REMAP = {
+    ("__main__", "VectorToVectorRegression"): ("src.train_aligner", "VectorToVectorRegression"),
+}
+
+
+class _BaseUnpickler(pickle.Unpickler):
+    """Unpickler that remaps __main__-qualified classes to their real module paths."""
+
+    def find_class(self, module, name):
+        module, name = _MAIN_REMAP.get((module, name), (module, name))
+        return super().find_class(module, name)
+
+
+class CPU_Unpickler(_BaseUnpickler):
+    """Unpickler that remaps CUDA tensors to CPU on load.
+
+    Reference: https://stackoverflow.com/questions/74259296
+    """
+
+    def find_class(self, module, name):
+        if module == "torch.storage" and name == "_load_from_bytes":
+            return lambda b: torch.load(io.BytesIO(b), map_location="cpu")
+        return super().find_class(module, name)
+
 
 class Pickler:
     def write(name, something, base_dir=None):
@@ -21,7 +48,7 @@ class Pickler:
         filename = base / f"{name}.pkl"
         try:
             with open(filename, "rb") as f:
-                return pickle.load(f)
+                return _BaseUnpickler(f).load()
         except RuntimeError as e:
             if "Attempting to deserialize object on CUDA device" in str(e):
                 print("Caught RuntimeError while loading. Remapping tensors to CPU.")
@@ -36,15 +63,3 @@ class Pickler:
         something = f_create()
         Pickler.write(name, something, base_dir)
         return something
-
-
-class CPU_Unpickler(pickle.Unpickler):
-    """Unpickler that remaps CUDA tensors to CPU on load.
-
-    Reference: https://stackoverflow.com/questions/74259296
-    """
-
-    def find_class(self, module, name):
-        if module == "torch.storage" and name == "_load_from_bytes":
-            return lambda b: torch.load(io.BytesIO(b), map_location="cpu")
-        return super().find_class(module, name)
