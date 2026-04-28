@@ -65,6 +65,7 @@ from src.explain import (
     plot_confusion_matrix,
     sanity_check_leace,
     sanity_check_ortho,
+    select_shared_instances,
     wrapper_NaiveEnum,
     wrapper_XpEnum,
     wrapper_XpSatEnum,
@@ -392,42 +393,60 @@ def main():
     # ── Filter behavior ───────────────────────────────────────────────────────
     B = make_behavior(args.behavior, args.class_idx, args.other_class_idx)
     filtered_data = filter_behavior(dict(all_data), B)  # shallow copy; avoids mutating all_data
-    print(f"\nBehavior '{behavior_suffix}': {len(filtered_data)} instances")
+    print(f"\nBehavior '{behavior_suffix}': {len(filtered_data)} instances before shared selection")
 
     if len(filtered_data) == 0:
         print("No instances match this behavior — exiting.")
         return
 
-    # ── Run 9 configurations ──────────────────────────────────────────────────
-    eraser_configs = [
-        ("CO", "ortho"),
-        ("CS", "splice"),
-        ("CL", "leace"),
-    ]
-
+    # ── Build all 3 erasers (needed for shared-instance pre-screening) ────────
     with torch.no_grad():
-        for prefix, eraser_type in eraser_configs:
+        filtered_eclips_pre = [v[2] for v in filtered_data.values()]
+
+        ortho_eraser = ClipOrthoEraser(C_vectors_N, device=device, dtype=torch.float64)
+
+        dummy = torch.stack(filtered_eclips_pre[:2]).to(device).to(torch.float64)
+        splice_eraser = ClipSpliceEraser(C_vectors_N, dummy, device=device, dtype=torch.float64)
+
+        sample_data = get_sample_data(all_data, device, sample_size=500)
+        leace_eraser = LeaceEraserWrapper(
+            sample_data, C_vectors_N, device=device, dtype=torch.float64
+        )
+
+        # ── Select shared instances: same images for all 9 configurations ─────
+        shared_data, precomputed = select_shared_instances(
+            filtered_data,
+            erasers=[("ortho", ortho_eraser), ("splice", splice_eraser), ("leace", leace_eraser)],
+            pred_fn=pred_fn,
+            n_max=args.experiments_per_behavior,
+            n_min=args.experiments_per_behavior // 2,
+            xpenum_iters=args.xpenum_iters,
+            C_vectors=C_vectors_N,
+            device=device,
+        )
+        filtered_data = shared_data
+        print(f"Behavior '{behavior_suffix}' (shared): {len(filtered_data)} instances")
+
+        # ── Run 9 configurations ──────────────────────────────────────────────
+        eraser_configs = [
+            ("CO", "ortho",  ortho_eraser),
+            ("CS", "splice", splice_eraser),
+            ("CL", "leace",  leace_eraser),
+        ]
+
+        for prefix, eraser_type, eraser in eraser_configs:
             print(f"\n{'='*60}\nEraser: {eraser_type.upper()}\n{'='*60}")
 
-            # --- build eraser and per-instance concept signs ---
+            # --- per-instance concept signs (computed from shared filtered_data) ---
             filtered_eclips = [v[2] for v in filtered_data.values()]
 
             if eraser_type == "ortho":
-                eraser = ClipOrthoEraser(C_vectors_N, device=device, dtype=torch.float64)
                 _, C_ord_signs = order_concept_strengths(filtered_eclips, C_vectors_N)
 
             elif eraser_type == "splice":
-                # Splice eraser is re-instantiated per image inside the wrappers;
-                # pass a dummy 2-image batch here just to obtain an object with .n set.
-                dummy = torch.stack(filtered_eclips[:2]).to(device).to(torch.float64)
-                eraser = ClipSpliceEraser(C_vectors_N, dummy, device=device, dtype=torch.float64)
                 C_ord_signs = torch.ones((len(filtered_data), args.n_concepts))
 
             elif eraser_type == "leace":
-                sample_data = get_sample_data(all_data, device, sample_size=500)
-                eraser = LeaceEraserWrapper(
-                    sample_data, C_vectors_N, device=device, dtype=torch.float64
-                )
                 eclips_stack = torch.stack(filtered_eclips).to(device).to(torch.float64)
                 C_ord_signs  = torch.sign(eclips_stack @ C_vectors_N)
 
@@ -441,6 +460,7 @@ def main():
                             filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
                             args.experiments_per_behavior, args.xpenum_iters,
                             beh_id, results_dir, device,
+                            precomputed=precomputed.get(eraser_type),
                         )
                 except _TimeoutError:
                     print(f"[TIMEOUT] {beh_id} exceeded {args.timeout}s — skipping")

@@ -69,6 +69,83 @@ def filter_behavior(data_dict, B):
     return data_dict
 
 
+def select_shared_instances(filtered_data, erasers, pred_fn,
+                             n_max, n_min, xpenum_iters, C_vectors, device):
+    """
+    Select the first n_max images from filtered_data that yield ≥1 AXp or CXp
+    for every eraser simultaneously.
+
+    Parameters
+    ----------
+    filtered_data : dict  { key: [label, pred, eclip, norm, ...] }
+    erasers : list of (eraser_type: str, eraser_obj)
+        eraser_type must be 'ortho', 'splice', or 'leace'.
+        For 'splice', a per-image ClipSpliceEraser is built automatically.
+    pred_fn : callable
+    n_max : int  — maximum images to collect
+    n_min : int  — raise ValueError if fewer than this many are found
+    xpenum_iters : int
+    C_vectors : Tensor  (d, n_concepts)
+    device : str
+
+    Returns
+    -------
+    shared_data : dict  (ordered subset of filtered_data)
+    precomputed : dict  { eraser_type: { key: (lastA, lastC) } }
+        Cached xp_enum results — pass to wrapper_XpEnum to avoid recomputation.
+    """
+    shared_keys = []
+    precomputed = {et: {} for et, _ in erasers}
+
+    print(f"\n── Selecting shared instances (n_max={n_max}, n_min={n_min}) ──")
+
+    for key, a_data in tqdm(filtered_data.items()):
+        ins_predicted = a_data[1]
+        instance_v    = a_data[2]
+        ins_v_norm    = a_data[3]
+
+        passes_all = True
+        results_this_image = {}
+
+        for eraser_type, eraser_obj in erasers:
+            if eraser_type == "splice":
+                _eraser = ClipSpliceEraser(
+                    C_vectors, instance_v,
+                    device=eraser_obj.device, dtype=eraser_obj.dtype,
+                )
+            else:
+                _eraser = eraser_obj
+
+            _, lastA, lastC, _ = xp_enum(
+                instance_v, ins_v_norm, ins_predicted, _eraser, pred_fn,
+                iters=xpenum_iters,
+            )
+
+            if not (lastA or lastC):
+                passes_all = False
+                break
+            results_this_image[eraser_type] = (lastA, lastC)
+
+        if passes_all:
+            for eraser_type, res in results_this_image.items():
+                precomputed[eraser_type][key] = res
+            shared_keys.append(key)
+            if len(shared_keys) >= n_max:
+                break
+
+    n_found = len(shared_keys)
+    print(f"+ Shared instances: {n_found} found (required ≥ {n_min})")
+
+    if n_found < n_min:
+        raise ValueError(
+            f"Only {n_found} images pass the shared-instance criterion "
+            f"(required ≥ {n_min})."
+        )
+
+    shared_data = {k: filtered_data[k] for k in shared_keys}
+    return shared_data, precomputed
+
+
 def repack_tensors(data_dict, device):
     """Unpack a data dict into (all_preds, all_eclips, all_norms)."""
     all_preds  = torch.tensor([v[1] for v in data_dict.values()], dtype=torch.int).to(device)
@@ -479,12 +556,18 @@ def _write_binary_csv(path, results_list, instance_idxs, C_len, C_ord_signs):
 
 def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
                    experiments_per_behavior, xpenum_iters, behavior_id,
-                   results_dir, device):
+                   results_dir, device, precomputed=None):
     """
     Run XpEnum on every instance in filtered_data (up to experiments_per_behavior).
 
     For each instance, runs the NINA loop to enumerate AXps and CXps.
     Writes binary CSV results to results_dir.
+
+    Parameters
+    ----------
+    precomputed : dict { key: (lastA, lastC) } or None
+        When provided (produced by select_shared_instances), the cached xp_enum
+        result is used for matching keys and the oracle is not re-invoked.
 
     Returns (all_results, all_eclips, all_predicted, all_instance_idxs)
     for use by wrapper_XpSatEnum.
@@ -497,17 +580,19 @@ def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
     print(f"\n{behavior_id} ── XpEnum ──────────────────────────")
     t0 = time.time()
 
-    for inst_idx, a_data in enumerate(tqdm(filtered_data.values())):
+    for inst_idx, (key, a_data) in enumerate(tqdm(filtered_data.items())):
         ins_predicted = a_data[1]
         instance_v    = a_data[2]
         ins_v_norm    = a_data[3]
 
-        if isinstance(eraser, ClipSpliceEraser):
-            eraser = ClipSpliceEraser(C_vectors, instance_v, device=device, dtype=torch.float64)
-
-        _, lastA, lastC, _ = xp_enum(
-            instance_v, ins_v_norm, ins_predicted, eraser, pred_fn, iters=xpenum_iters
-        )
+        if precomputed is not None and key in precomputed:
+            lastA, lastC = precomputed[key]
+        else:
+            if isinstance(eraser, ClipSpliceEraser):
+                eraser = ClipSpliceEraser(C_vectors, instance_v, device=device, dtype=torch.float64)
+            _, lastA, lastC, _ = xp_enum(
+                instance_v, ins_v_norm, ins_predicted, eraser, pred_fn, iters=xpenum_iters
+            )
 
         if lastA or lastC:
             all_results.append({"A": lastA, "C": lastC})
