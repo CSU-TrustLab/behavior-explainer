@@ -15,6 +15,13 @@ seaborn
 # Utilities
 tqdm
 
+# Metrics notebook
+jupyter
+ipykernel
+
+# LLM-as-a-judge concept classification (Metric 7 — Validity Ratio)
+anthropic
+
 # CLIP — install separately (not on PyPI):
 #   pip install git+https://github.com/openai/CLIP.git
 clip
