@@ -22,7 +22,7 @@ Pipeline
 4. Filter to the requested behavior (B, class_idx, other_class_idx).
 5. For each of the 3 eraser types (Ortho, Splice, LEACE):
        run XpEnum  [→ optionally XpSatEnum]  and  NaiveEnum,
-       each capped at TIMEOUT_SECS.
+       each capped at --timeout seconds.
 6. Write binary CSV results to results/<cm_name>/.
 
 Notes
@@ -34,10 +34,7 @@ Notes
 """
 
 import argparse
-import copy
-import signal
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 
 import torch
@@ -76,31 +73,6 @@ from utils.pickler import Pickler
 INTERMEDIATE_DIR = PROJECT_ROOT / "intermediate_results"
 RESULTS_DIR      = PROJECT_ROOT / "results"
 VOCABS_DIR       = PROJECT_ROOT / "vocabs"
-
-TIMEOUT_SECS = 3600  # 1 hour per configuration
-
-
-# ---------------------------------------------------------------------------
-# Timeout
-# ---------------------------------------------------------------------------
-
-class _TimeoutError(RuntimeError):
-    pass
-
-
-@contextmanager
-def time_limit(seconds):
-    """Raise _TimeoutError if the body takes longer than ``seconds`` seconds."""
-    def _handler(signum, frame):
-        raise _TimeoutError(f"Timed out after {seconds}s")
-    old = signal.signal(signal.SIGALRM, _handler)
-    signal.alarm(seconds)
-    try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
-
 
 # ---------------------------------------------------------------------------
 # Behavior predicates
@@ -296,6 +268,11 @@ def parse_args():
         help="Force rebuild of behavior data (ignore existing pkl)",
     )
     p.add_argument(
+        "--auto-retry", action="store_true",
+        help="If fewer than N shared instances are found, automatically proceed "
+             "with however many qualify (instead of prompting). Exits if zero found.",
+    )
+    p.add_argument(
         "--timeout", type=int, default=3600,
         help="Per-configuration timeout in seconds (default: 3600)",
     )
@@ -342,6 +319,19 @@ def main():
         img_mean_map, img_mean_clip, class_vectors,
         device, args.norm_flag,
     )
+
+    # ── Diagnostic: Splice erase_all baseline ────────────────────────────────
+    # Splice erases all concepts by zeroing weights → zero CLIP vector.
+    # pred_fn(zero, ...) adds img_mean_map back, so the "erased" prediction is
+    # always f_head(align_inv(img_mean_map)).  If this equals class_idx, every
+    # image of that class is structurally degenerate for Splice.
+    with torch.no_grad():
+        _zero = torch.zeros(1, img_mean_map.shape[0], device=device, dtype=torch.float64)
+        _logits = f_head(align_inv((_zero + img_mean_map).float()))
+        _default_class = _logits.argmax(dim=1).item()
+        print(f"\nSplice erase_all baseline: img_mean_map → class {_default_class}")
+        print(f"Target class: {args.class_idx}  "
+              f"{'(MATCH — Splice will be degenerate for this class)' if _default_class == args.class_idx else '(no match — Splice should work)'}")
 
     # ── File-naming components ────────────────────────────────────────────────
     cls_str   = str(args.class_idx)       if args.class_idx >= 0       else "-"
@@ -413,17 +403,57 @@ def main():
             sample_data, C_vectors_N, device=device, dtype=torch.float64
         )
 
+        # ── Pre-screening LEACE sanity check on filtered behavior ────────────
+        # Remove images where erasing all N concepts with this LEACE eraser
+        # leaves the prediction unchanged — they cannot produce non-empty AXps.
+        # Uses the same sample_data as leace_eraser for consistency.
+        # Note: sanity_check_splice is intentionally omitted here because it
+        # uses batch ADMM, which is inconsistent with the per-image splice used
+        # in select_shared_instances.  Splice is also not a qualifying eraser.
+        print("\n── Pre-screening LEACE sanity check ──")
+        filtered_data = sanity_check_leace(
+            filtered_data, sample_data, C_vectors_N, pred_fn, device
+        )
+        print(f"Behavior '{behavior_suffix}' (post sanity check): {len(filtered_data)} instances")
+        if len(filtered_data) == 0:
+            print("No instances remain after pre-screening LEACE sanity check — exiting.")
+            return
+
         # ── Select shared instances: same images for all 9 configurations ─────
+        # Only Ortho and LEACE are qualifying: both must produce ≥1 non-empty
+        # AXp or CXp.  Splice is cached but does not gate image selection.
+        n_target = args.experiments_per_behavior
         shared_data, precomputed = select_shared_instances(
             filtered_data,
             erasers=[("ortho", ortho_eraser), ("splice", splice_eraser), ("leace", leace_eraser)],
             pred_fn=pred_fn,
-            n_max=args.experiments_per_behavior,
-            n_min=args.experiments_per_behavior // 2,
-            xpenum_iters=args.xpenum_iters,
+            n_max=n_target,
             C_vectors=C_vectors_N,
             device=device,
+            qualifying_types={"ortho", "leace"},
         )
+        n_found = len(shared_data)
+
+        if n_found < n_target:
+            print(
+                f"\nOnly {n_found} out of {n_target} images are good candidates "
+                f"that produce non-empty explanations for all qualifying erasers."
+            )
+            if n_found == 0:
+                print("No candidates found — exiting.")
+                return
+            if args.auto_retry:
+                print(f"[auto-retry] Proceeding with {n_found} images.")
+            else:
+                answer = input(
+                    f"Do you want to retry the experiment with {n_found} images "
+                    f"instead of {n_target}? [y/N] "
+                ).strip().lower()
+                if answer != "y":
+                    print("Exiting.")
+                    return
+                print(f"Retrying with {n_found} images.")
+
         filtered_data = shared_data
         print(f"Behavior '{behavior_suffix}' (shared): {len(filtered_data)} instances")
 
@@ -454,46 +484,37 @@ def main():
             xp_results = xp_eclips = xp_preds = xp_idxs = None
             if not args.no_xpenum:
                 beh_id = f"{prefix}X{behavior_suffix}"
-                try:
-                    with time_limit(args.timeout):
-                        xp_results, xp_eclips, xp_preds, xp_idxs = wrapper_XpEnum(
-                            filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
-                            args.experiments_per_behavior, args.xpenum_iters,
-                            beh_id, results_dir, device,
-                            precomputed=precomputed.get(eraser_type),
-                        )
-                except _TimeoutError:
-                    print(f"[TIMEOUT] {beh_id} exceeded {args.timeout}s — skipping")
+                xp_results, xp_eclips, xp_preds, xp_idxs = wrapper_XpEnum(
+                    filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
+                    args.experiments_per_behavior, args.xpenum_iters,
+                    beh_id, results_dir, device,
+                    precomputed=precomputed.get(eraser_type),
+                    timeout=args.timeout,
+                )
 
-                # --- XpSatEnum (requires XpEnum results) ---
-                if not args.no_xpsatenum and xp_results is not None:
+                # --- XpSatEnum (requires at least one XpEnum result) ---
+                if not args.no_xpsatenum and xp_results:
                     if eraser_type == "leace":
                         eraser.keep_hashmap = True
                     beh_id = f"{prefix}S{behavior_suffix}"
-                    try:
-                        with time_limit(args.timeout):
-                            wrapper_XpSatEnum(
-                                filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
-                                xp_results, xp_eclips, xp_preds, xp_idxs,
-                                beh_id, results_dir, device,
-                            )
-                    except _TimeoutError:
-                        print(f"[TIMEOUT] {beh_id} exceeded {args.timeout}s — skipping")
+                    wrapper_XpSatEnum(
+                        filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
+                        xp_results, xp_eclips, xp_preds, xp_idxs,
+                        beh_id, results_dir, device,
+                        timeout=args.timeout,
+                    )
 
             # --- NaiveEnum ---
             if not args.no_naiveenum:
                 if eraser_type == "leace":
                     eraser.keep_hashmap = True
                 beh_id = f"{prefix}N{behavior_suffix}"
-                try:
-                    with time_limit(args.timeout):
-                        wrapper_NaiveEnum(
-                            filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
-                            args.experiments_per_behavior, args.search_depth,
-                            beh_id, results_dir, device,
-                        )
-                except _TimeoutError:
-                    print(f"[TIMEOUT] {beh_id} exceeded {args.timeout}s — skipping")
+                wrapper_NaiveEnum(
+                    filtered_data, C_N, C_vectors_N, C_ord_signs, eraser, pred_fn,
+                    args.experiments_per_behavior, args.search_depth,
+                    beh_id, results_dir, device,
+                    timeout=args.timeout,
+                )
 
     print("\nDone!")
 

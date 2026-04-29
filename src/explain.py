@@ -70,10 +70,16 @@ def filter_behavior(data_dict, B):
 
 
 def select_shared_instances(filtered_data, erasers, pred_fn,
-                             n_max, n_min, xpenum_iters, C_vectors, device):
+                             n_max, C_vectors, device,
+                             qualifying_types=None):
     """
-    Select the first n_max images from filtered_data that yield ≥1 AXp or CXp
-    for every eraser simultaneously.
+    Select the first n_max images where erasing all N concepts changes the
+    prediction for every qualifying eraser.
+
+    One oracle call per qualifying eraser per image suffices: if erasing all N
+    concepts still preserves the prediction, the empty set is an AXp and no
+    non-trivial explanation can exist.  Non-qualifying erasers are not checked.
+    xp_enum is not run here; wrapper_XpEnum computes explanations from scratch.
 
     Parameters
     ----------
@@ -82,22 +88,27 @@ def select_shared_instances(filtered_data, erasers, pred_fn,
         eraser_type must be 'ortho', 'splice', or 'leace'.
         For 'splice', a per-image ClipSpliceEraser is built automatically.
     pred_fn : callable
-    n_max : int  — maximum images to collect
-    n_min : int  — raise ValueError if fewer than this many are found
-    xpenum_iters : int
+    n_max : int  — maximum images to collect (target)
     C_vectors : Tensor  (d, n_concepts)
     device : str
+    qualifying_types : set of str or None
+        Eraser types that must yield a non-empty explanation for an image to be
+        included.  Non-qualifying erasers are not checked during selection.
+        If None, all erasers are qualifying.
 
     Returns
     -------
-    shared_data : dict  (ordered subset of filtered_data)
-    precomputed : dict  { eraser_type: { key: (lastA, lastC) } }
-        Cached xp_enum results — pass to wrapper_XpEnum to avoid recomputation.
+    shared_data : dict  (ordered subset of filtered_data, len ≤ n_max)
+    precomputed : dict  { eraser_type: {} }  (always empty — no caching here)
     """
+    if qualifying_types is None:
+        qualifying_types = {et for et, _ in erasers}
+
     shared_keys = []
     precomputed = {et: {} for et, _ in erasers}
 
-    print(f"\n── Selecting shared instances (n_max={n_max}, n_min={n_min}) ──")
+    print(f"\n── Selecting shared instances (target={n_max}) ──")
+    print(f"   Qualifying erasers: {', '.join(sorted(qualifying_types))}")
 
     for key, a_data in tqdm(filtered_data.items()):
         ins_predicted = a_data[1]
@@ -105,9 +116,11 @@ def select_shared_instances(filtered_data, erasers, pred_fn,
         ins_v_norm    = a_data[3]
 
         passes_all = True
-        results_this_image = {}
 
         for eraser_type, eraser_obj in erasers:
+            if eraser_type not in qualifying_types:
+                continue
+
             if eraser_type == "splice":
                 _eraser = ClipSpliceEraser(
                     C_vectors, instance_v,
@@ -116,31 +129,19 @@ def select_shared_instances(filtered_data, erasers, pred_fn,
             else:
                 _eraser = eraser_obj
 
-            _, lastA, lastC, _ = xp_enum(
-                instance_v, ins_v_norm, ins_predicted, _eraser, pred_fn,
-                iters=xpenum_iters,
-            )
-
-            if not (lastA or lastC):
+            # CheckAXpFast({}) returns True when prediction is preserved after
+            # erasing ALL concepts → degenerate empty AXp → no useful explanation.
+            if CheckAXpFast(set(), instance_v, ins_v_norm, ins_predicted, _eraser, pred_fn):
                 passes_all = False
                 break
-            results_this_image[eraser_type] = (lastA, lastC)
 
         if passes_all:
-            for eraser_type, res in results_this_image.items():
-                precomputed[eraser_type][key] = res
             shared_keys.append(key)
             if len(shared_keys) >= n_max:
                 break
 
     n_found = len(shared_keys)
-    print(f"+ Shared instances: {n_found} found (required ≥ {n_min})")
-
-    if n_found < n_min:
-        raise ValueError(
-            f"Only {n_found} images pass the shared-instance criterion "
-            f"(required ≥ {n_min})."
-        )
+    print(f"+ Shared instances: {n_found} / {n_max} target")
 
     shared_data = {k: filtered_data[k] for k in shared_keys}
     return shared_data, precomputed
@@ -556,18 +557,22 @@ def _write_binary_csv(path, results_list, instance_idxs, C_len, C_ord_signs):
 
 def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
                    experiments_per_behavior, xpenum_iters, behavior_id,
-                   results_dir, device, precomputed=None):
+                   results_dir, device, precomputed=None, timeout=None):
     """
     Run XpEnum on every instance in filtered_data (up to experiments_per_behavior).
 
     For each instance, runs the NINA loop to enumerate AXps and CXps.
-    Writes binary CSV results to results_dir.
+    Always writes binary CSV results and a time CSV to results_dir, even when
+    the time limit is reached (partial results are preserved).
 
     Parameters
     ----------
     precomputed : dict { key: (lastA, lastC) } or None
         When provided (produced by select_shared_instances), the cached xp_enum
         result is used for matching keys and the oracle is not re-invoked.
+    timeout : int or None
+        Wall-clock time limit in seconds.  The loop stops at the next image
+        boundary after the limit is exceeded; partial results are written.
 
     Returns (all_results, all_eclips, all_predicted, all_instance_idxs)
     for use by wrapper_XpSatEnum.
@@ -579,8 +584,15 @@ def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
 
     print(f"\n{behavior_id} ── XpEnum ──────────────────────────")
     t0 = time.time()
+    timed_out = False
 
     for inst_idx, (key, a_data) in enumerate(tqdm(filtered_data.items())):
+        if timeout is not None and (time.time() - t0) > timeout:
+            print(f"[TIMEOUT] {behavior_id}: stopped after {inst_idx} images "
+                  f"({len(all_results)} with explanations)")
+            timed_out = True
+            break
+
         ins_predicted = a_data[1]
         instance_v    = a_data[2]
         ins_v_norm    = a_data[3]
@@ -594,7 +606,7 @@ def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
                 instance_v, ins_v_norm, ins_predicted, eraser, pred_fn, iters=xpenum_iters
             )
 
-        if lastA or lastC:
+        if any(lastA) or any(lastC):
             all_results.append({"A": lastA, "C": lastC})
             all_eclips.append(instance_v)
             all_predicted.append(ins_predicted)
@@ -611,33 +623,44 @@ def wrapper_XpEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
         )
 
     elapsed = time.time() - t0
+    status = "XpEnum (partial)" if timed_out else "XpEnum"
     with open(Path(results_dir) / f"time_{behavior_id}.csv", "w") as f:
-        f.write(f"XpEnum:\n{elapsed:.2f}\n")
-    print(f"{behavior_id} ── done ({elapsed:.1f}s) ────────────────────")
+        f.write(f"{status}:\n{elapsed:.2f}\n")
+    print(f"{behavior_id} ── {'timed out' if timed_out else 'done'} ({elapsed:.1f}s) ────────────────────")
     return all_results, all_eclips, all_predicted, all_idxs
 
 
 def wrapper_XpSatEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
                       all_results, all_eclips, all_predicted, all_idxs,
-                      behavior_id, results_dir, device):
+                      behavior_id, results_dir, device, timeout=None):
     """
     XpSatEnum: saturate explanations found by XpEnum across instances.
 
     For every instance, tries explanations found on all other instances and
     checks whether they transfer (minimised if necessary).
     Overwrites the XpEnum CSV files with the enriched results.
+    Always writes results and a time CSV, even when the time limit is reached.
 
     Note: uses the source instance's predicted class for the oracle check,
     which is equivalent to using the target's class when all instances in the
     behavior share the same prediction (e.g. B2, B6).
+    timeout : int or None
+        Wall-clock time limit in seconds.  Saturation stops at the next image
+        boundary after the limit is exceeded; results so far are written.
     """
     print(f"\n{behavior_id} ── XpSatEnum ───────────────────────")
     t0 = time.time()
+    timed_out = False
 
     pre_lens = [{"A": len(r["A"]), "C": len(r["C"])} for r in all_results]
     new_axps = new_cxps = 0
 
     for out_idx, instance_v in enumerate(tqdm(all_eclips)):
+        if timeout is not None and (time.time() - t0) > timeout:
+            print(f"[TIMEOUT] {behavior_id}: stopped after {out_idx} images saturated")
+            timed_out = True
+            break
+
         if isinstance(eraser, ClipSpliceEraser):
             eraser = ClipSpliceEraser(C_vectors, instance_v, device=device, dtype=torch.float64)
 
@@ -680,17 +703,22 @@ def wrapper_XpSatEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
         )
 
     elapsed = time.time() - t0
+    status = "XpSatEnum (partial)" if timed_out else "XpSatEnum"
     with open(Path(results_dir) / f"time_{behavior_id}.csv", "w") as f:
-        f.write(f"XpSatEnum:\n{elapsed:.2f}\n")
-    print(f"{behavior_id} ── done ({elapsed:.1f}s) ────────────────────")
+        f.write(f"{status}:\n{elapsed:.2f}\n")
+    print(f"{behavior_id} ── {'timed out' if timed_out else 'done'} ({elapsed:.1f}s) ────────────────────")
 
 
 def wrapper_NaiveEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
                       experiments_per_behavior, search_depth, behavior_id,
-                      results_dir, device):
+                      results_dir, device, timeout=None):
     """
     NaiveEnum: depth-bounded exhaustive search for AXps and CXps on every instance.
-    Writes binary CSV results to results_dir.
+    Always writes binary CSV results and a time CSV to results_dir, even when
+    the time limit is reached (partial results are preserved).
+    timeout : int or None
+        Wall-clock time limit in seconds.  The loop stops at the next image
+        boundary after the limit is exceeded; partial results are written.
     """
     all_results   = []
     all_eclips    = []
@@ -699,8 +727,15 @@ def wrapper_NaiveEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
 
     print(f"\n{behavior_id} ── NaiveEnum (depth={search_depth}) ─────────")
     t0 = time.time()
+    timed_out = False
 
     for inst_idx, a_data in enumerate(tqdm(filtered_data.values())):
+        if timeout is not None and (time.time() - t0) > timeout:
+            print(f"[TIMEOUT] {behavior_id}: stopped after {inst_idx} images "
+                  f"({len(all_results)} with explanations)")
+            timed_out = True
+            break
+
         ins_predicted = a_data[1]
         instance_v    = a_data[2]
 
@@ -712,7 +747,7 @@ def wrapper_NaiveEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
         lastC = naive_enum_search(instance_v, ins_predicted, eraser, pred_fn,
                                   search_depth=search_depth, findAXps=False)
 
-        if lastA or lastC:
+        if any(lastA) or any(lastC):
             all_results.append({"A": lastA, "C": lastC})
             all_eclips.append(instance_v)
             all_predicted.append(ins_predicted)
@@ -729,6 +764,7 @@ def wrapper_NaiveEnum(filtered_data, C, C_vectors, C_ord_signs, eraser, pred_fn,
         )
 
     elapsed = time.time() - t0
+    status = "NaiveEnum (partial)" if timed_out else "NaiveEnum"
     with open(Path(results_dir) / f"time_{behavior_id}.csv", "w") as f:
-        f.write(f"NaiveEnum:\n{elapsed:.2f}\n")
-    print(f"{behavior_id} ── done ({elapsed:.1f}s) ────────────────────")
+        f.write(f"{status}:\n{elapsed:.2f}\n")
+    print(f"{behavior_id} ── {'timed out' if timed_out else 'done'} ({elapsed:.1f}s) ────────────────────")
