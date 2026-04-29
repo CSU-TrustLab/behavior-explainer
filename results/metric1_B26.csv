@@ -1,0 +1,4 @@
+Eraser,Ortho,Ortho,Ortho,SpLiCE,SpLiCE,SpLiCE,LEACE,LEACE,LEACE
+Algorithm,XpEnum,XpSatEnum,NaiveEnum,XpEnum,XpSatEnum,NaiveEnum,XpEnum,XpSatEnum,NaiveEnum
+AXps,20.00 ± 5.36,172.12 ± 35.65,26.40 ± 32.41*,-,-,-,-,-,-
+CXps,17.84 ± 5.14,106.06 ± 49.74,1847.20 ± 481.61*,-,-,-,-,-,-
