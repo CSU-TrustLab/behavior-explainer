@@ -138,7 +138,8 @@ def apply_energy_order(all_data, C, C_vectors, mcs, dataset_name, device):
     C = [C[i] for i in order.cpu().tolist()]
     print(f"High-energy concepts (top 10): {C[:10]}")
     Pickler.write(f"MCS_{mcs}_NA_{dataset_name}_e_vecs", C_vectors)
-    print("+ Energy-sorted vectors saved.")
+    (INTERMEDIATE_DIR / f"MCS_{mcs}_NA_{dataset_name}_e_vocab.txt").write_text("\n".join(C))
+    print("+ Energy-sorted vectors and vocab saved.")
     return C, C_vectors
 
 
