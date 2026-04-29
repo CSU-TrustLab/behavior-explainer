@@ -111,7 +111,7 @@ Run once per `(dataset, behavior)` pair; re-run with `--force` to overwrite.
 
 ---
 
-## Reproducing Metrics (Reviewer Notebook)
+## Reproducing Metrics
 
 Once the experiments in steps 1–5 have been run and the precomputed CSV files are
 present in `intermediate_results/`, **no model loading or GPU is required** to

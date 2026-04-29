@@ -37,14 +37,12 @@ Use the provided Docker image to ensure a reproducible environment:
 
 ```bash
 docker run --rm \
-  --gpus '"device=3"' \
+  --gpus '"device=0"' \
   --shm-size=1g \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   --network="host" \
-  -v /home/$USER:/home/$USER \
-  -v /s/poppy/a/$USER:/s/poppy/a/$USER \
-  -v /s/poppy/b/$USER:/s/poppy/b/$USER \
+  -v /path/to/behavior-explainer:/path/to/behavior-explainer \
   nvcr.io/nvidia/pytorch:concepts-hitman-leace \
   bash -c "cd /path/to/behavior-explainer && python -m pytest tests/ -v -s"
 ```
