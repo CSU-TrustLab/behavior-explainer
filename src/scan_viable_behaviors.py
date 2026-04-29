@@ -9,15 +9,14 @@ For each RIVAL10 class and behavior type, reports:
 
 Behaviors scanned
 -----------------
-  B=2  : correctly classified (pred == label == class_idx)
-  B=3  : misclassified       (pred != class_idx, label == class_idx)
-  B=5  : specific confusion  (label == class_idx, pred == other_class_idx)
+  B=2  : correct classification  (pred == label == class_idx)
+  B=5  : misclassification       (label == class_idx, pred == other_class_idx)
 
 B=5 is scanned for every (class_idx, other_class_idx) pair with ≥10 instances.
 
 Usage
 -----
-    python scripts/scan_viable_behaviors.py [--min-instances N]
+    python src/scan_viable_behaviors.py [--min-instances N]
 
 Requires the behavior pkl CM_MCS90_N300_resnet_rival10_e.pkl (built by the
 ships integration test).
@@ -99,13 +98,14 @@ def main():
 
     sample_data = get_sample_data(all_data, device, sample_size=500)
 
-    # ── B=2 and B=3 ──────────────────────────────────────────────────────────
     hdr = f"{'B':<3} {'gt':<8} {'pred':<8} {'total':>7} {'leace_ok':>9} {'splice_ok':>10}"
+
+    # ── Correct classification behaviors (B=2) ────────────────────────────────
+    print("Correct classification behaviors (B=2):")
     print(hdr)
     print("-" * len(hdr))
 
     for i, name in enumerate(RIVAL10):
-        # B=2: correctly classified
         sub = {k: v for k, v in all_data.items()
                if int(v[1]) == i and int(v[0]) == i}
         if len(sub) >= args.min_instances:
@@ -113,22 +113,9 @@ def main():
             sok = "yes" if splice_default != i else "NO"
             print(f"{'2':<3} {name:<8} {name:<8} {len(sub):>7} {lp:>9} {sok:>10}")
 
+    # ── Misclassification behaviors (B=5) ─────────────────────────────────────
     print()
-    for i, name in enumerate(RIVAL10):
-        # B=3: any misclassification of class i
-        sub = {k: v for k, v in all_data.items()
-               if int(v[0]) != i and int(v[1]) == i}
-        if len(sub) >= args.min_instances:
-            # predicted class for B=3 varies per image — Splice ok if splice_default != pred per image
-            # conservatively: at least some images have pred != splice_default
-            preds = set(int(v[0]) for v in sub.values())
-            sok = "yes" if any(p != splice_default for p in preds) else "NO"
-            lp = leace_pass_count(sub, sample_data, C_vectors_N, pred_fn, device)
-            print(f"{'3':<3} {name:<8} {'(any)':<8} {len(sub):>7} {lp:>9} {sok:>10}")
-
-    # ── B=5: specific confusion pairs ─────────────────────────────────────────
-    print()
-    print("B=5 specific confusion pairs (label=gt, pred=other):")
+    print("Misclassification behaviors (B=5, label=gt, pred=other):")
     print(hdr)
     print("-" * len(hdr))
 
@@ -140,7 +127,6 @@ def main():
                    if int(v[1]) == i and int(v[0]) == j}
             if len(sub) < args.min_instances:
                 continue
-            # predicted class is j; Splice degenerate if img_mean_map → j
             sok = "yes" if splice_default != j else "NO"
             lp = leace_pass_count(sub, sample_data, C_vectors_N, pred_fn, device)
             print(f"{'5':<3} {name_i:<8} {name_j:<8} {len(sub):>7} {lp:>9} {sok:>10}")
