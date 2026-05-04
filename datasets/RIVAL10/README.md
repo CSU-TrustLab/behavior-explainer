@@ -23,18 +23,19 @@ RIVAL10/
 ## Download
 
 > **The dataset images are not tracked in this repository.**
-> Please download RIVAL10 from the official source:
+> Please download RIVAL10 from the official repository:
 >
-> [Download link — TODO: add official URL]
+> <https://github.com/mmoayeri/RIVAL10>
 
 After downloading, place the contents under `datasets/RIVAL10/` following the structure above.
 
 ## Citation
 
 ```bibtex
-@inproceedings{rival10,
-  title   = {RIVAL10: A Benchmark for Class-Agnostic Part-Based Explanations},
-  author  = {[authors]},
-  year    = {[year]}
+@inproceedings{moayeri2022rival10,
+  title     = {A Comprehensive Study of Image Classification Model Sensitivity to Foregrounds, Backgrounds, and Visual Attributes},
+  author    = {Moayeri, Mazda and Pope, Phillip and Balaji, Yogesh and Feizi, Soheil},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2022}
 }
 ```

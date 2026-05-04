@@ -41,9 +41,11 @@ EuroSAT/
 ## Download
 
 > **The dataset images are not tracked in this repository.**
-> Please download EuroSAT from the official source:
+> Please download the RGB version of EuroSAT from the official repository:
 >
-> [Download link — TODO: add official URL]
+> <https://github.com/phelber/EuroSAT>
+>
+> Direct ZIP: <https://madm.dfki.de/files/sentinel/EuroSAT.zip>
 
 After downloading, place the class folders under `datasets/EuroSAT/` following the structure above.
 
@@ -54,6 +56,10 @@ After downloading, place the class folders under `datasets/EuroSAT/` following t
   title   = {EuroSAT: A Novel Dataset and Deep Learning Benchmark for Land Use and Land Cover Classification},
   author  = {Helber, Patrick and Bischke, Benjamin and Dengel, Andreas and Borth, Damian},
   journal = {IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing},
-  year    = {2019}
+  volume  = {12},
+  number  = {7},
+  pages   = {2217--2226},
+  year    = {2019},
+  doi     = {10.1109/JSTARS.2019.2918242}
 }
 ```
