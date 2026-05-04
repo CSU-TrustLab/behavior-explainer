@@ -33,18 +33,15 @@ skipped (they are guarded by `@pytest.mark.skipif`).
 
 ## Running the tests
 
-Use the provided Docker image to ensure a reproducible environment:
+Install all dependencies from the project root, then run pytest:
 
 ```bash
-docker run --rm \
-  --gpus '"device=0"' \
-  --shm-size=1g \
-  --ulimit memlock=-1 \
-  --ulimit stack=67108864 \
-  --network="host" \
-  -v /path/to/behavior-explainer:/path/to/behavior-explainer \
-  nvcr.io/nvidia/pytorch:concepts-hitman-leace \
-  bash -c "cd /path/to/behavior-explainer && python -m pytest tests/ -v -s"
+pip install -r requirements.txt
+pip install git+https://github.com/openai/CLIP.git
+```
+
+```bash
+python -m pytest tests/ -v -s
 ```
 
 To run a single test:
