@@ -1,6 +1,6 @@
 # Behavior Explainer
 
-Code for the paper: **[Paper Title]**
+Code for the paper: **Concept-Based Abductive and Contrastive Explanations for Behaviors of Vision Models**
 
 ## Repository Structure
 
